@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  azure-devops-task-generator:
+    build:
+      context: .
+      dockerfile: AzureDevOpsTaskGenerator/Dockerfile
+    container_name: azure-devops-task-generator
+    volumes:
+      # Mount the current directory to /app/tasks in the container
+      # This allows you to access task files from the host
+      - ./:/app/tasks
+    environment:
+      # Optional: Set default values (can be overridden)
+      - DOTNET_ENVIRONMENT=Production
+    # Override the default command to show help if no arguments provided
+    command: ["--help"]
+    
+  # Service for dry-run mode (preview only)
+  azure-devops-task-generator-dryrun:
+    build:
+      context: .
+      dockerfile: AzureDevOpsTaskGenerator/Dockerfile
+    container_name: azure-devops-task-generator-dryrun
+    volumes:
+      - ./:/app/tasks
+    environment:
+      - DOTNET_ENVIRONMENT=Production
+    # Example dry-run command - modify as needed
+    command: [
+      "--file", "/app/tasks/fixoda-development-tasks.md",
+      "--organization", "https://dev.azure.com/yourorg",
+      "--project", "YourProject", 
+      "--token", "your-token-here",
+      "--dry-run"
+    ]
+    profiles:
+      - dryrun

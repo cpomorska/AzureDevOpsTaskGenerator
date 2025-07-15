@@ -1,0 +1,105 @@
+﻿# .dockerignore for Azure DevOps Task Generator
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docker files
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Documentation
+README.md
+*.md
+
+# IDE and editor files
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build outputs
+**/bin/
+**/obj/
+**/out/
+
+# Test results
+TestResults/
+**/*.trx
+**/*.coverage
+**/*.coveragexml
+
+# NuGet
+packages/
+*.nupkg
+
+# User-specific files
+*.user
+*.suo
+*.cache
+*.docstates
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Runtime files
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Dependency directories
+node_modules/
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env
+
+# Certificates and keys
+*.pfx
+*.p12
+*.key
+*.pem
+certs/
+
+# Kubernetes
+.kubernetes/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Vault data
+vault/data/
+
+# Temporary files
+tmp/
+temp/
