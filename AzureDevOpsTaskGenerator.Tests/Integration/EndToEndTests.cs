@@ -165,6 +165,7 @@ public class EndToEndTests
 
         epics.Should().NotBeEmpty();
         features.Should().NotBeEmpty();
+        tasks.Should().NotBeEmpty();
         
         // Verify parent-child relationships are maintained
         foreach (var feature in features)

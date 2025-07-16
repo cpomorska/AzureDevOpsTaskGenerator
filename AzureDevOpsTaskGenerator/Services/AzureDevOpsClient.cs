@@ -24,7 +24,7 @@ public class AzureDevOpsClient : IAzureDevOpsClient
             _connection = new VssConnection(new Uri(organizationUrl), credentials);
             
             await _connection.ConnectAsync();
-            _workItemClient = _connection.GetClient<WorkItemTrackingHttpClient>();
+            _workItemClient = await _connection.GetClientAsync<WorkItemTrackingHttpClient>();
             
             return await TestConnectionAsync();
         }

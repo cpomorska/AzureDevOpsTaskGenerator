@@ -57,7 +57,7 @@ public class TaskGeneratorServiceTests
 
         // Assert
         hierarchy.Epics.Should().HaveCount(1);
-        hierarchy.Epics.First().Should().Be(epic1);
+        hierarchy.Epics[0].Should().Be(epic1);
         
         hierarchy.EpicToFeatures.Should().ContainKey("epic1");
         hierarchy.EpicToFeatures["epic1"].Should().HaveCount(2);

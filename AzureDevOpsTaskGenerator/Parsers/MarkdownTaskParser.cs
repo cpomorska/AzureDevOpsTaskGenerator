@@ -126,7 +126,7 @@ public class MarkdownTaskParser : ITextFileParser
                     if (!IsTaskItem(trimmedLine))
                     {
                         int effort = ExtractEffortFromLine(trimmedLine);
-                        if (effort > 0) { currentFeature.StoryPoints = effort; linesConsumed++; continue; }
+                        if (effort > 0) { currentFeature.StoryPoints = effort; linesConsumed++; }
                     }
                     // Otherwise, keep scanning
                 }
@@ -171,18 +171,18 @@ public class MarkdownTaskParser : ITextFileParser
         return Task.FromResult(tasks);
     }
 
-    private bool IsEpicHeader(string line)
+    private static bool IsEpicHeader(string line)
     {
         return line.StartsWith("### Epic:") || line.StartsWith("## Epic:") || 
                (line.StartsWith("##") && line.Contains("Epic"));
     }
 
-    private bool IsFeatureHeader(string line)
+    private static bool IsFeatureHeader(string line)
     {
         return line.StartsWith("#### Features:") || line.Contains("Features:");
     }
 
-    private bool IsFeatureItem(string line)
+    private static bool IsFeatureItem(string line)
     {
         // Numbered list items like "1. **Feature Name**"
         return Regex.IsMatch(line, @"^\d+\.\s*\*\*.*\*\*");
@@ -291,7 +291,7 @@ public class MarkdownTaskParser : ITextFileParser
         return 0;
     }
 
-    private int ExtractEffortFromLine(string line)
+    private static int ExtractEffortFromLine(string line)
     {
         // Robustly match effort in lines like '- **Effort**: 8 SP', '- 8 SP', '- 8 story points', etc.
         var patterns = new[]
@@ -316,7 +316,7 @@ public class MarkdownTaskParser : ITextFileParser
         return 0;
     }
 
-    private string ExtractBusinessValueFromContext(string[] lines, int startIndex)
+    private static string ExtractBusinessValueFromContext(string[] lines, int startIndex)
     {
         for (int i = startIndex; i < Math.Min(startIndex + 10, lines.Length); i++)
         {

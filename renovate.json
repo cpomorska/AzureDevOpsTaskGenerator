@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "baseBranches": ["develop"],
+  "packageRules": [
+    {
+      "automerge": true,
+      "matchPackageNames": [
+        "*"
+      ]
+    }
+  ],
+  "timezone": "Europe/Berlin",
+  "description": "only on weekends between 3 and 4",
+  "schedule": [
+    "* 3,4 * * 0,6"
+  ]
+}
