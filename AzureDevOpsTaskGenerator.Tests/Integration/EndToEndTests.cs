@@ -1,7 +1,6 @@
 using FluentAssertions;
 using Xunit;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using AzureDevOpsTaskGenerator.Interfaces;
 using AzureDevOpsTaskGenerator.Parsers;
@@ -64,7 +63,7 @@ public class EndToEndTests
         var document = await parser.ParseAsync(testFile);
 
         // Assert
-        document.Tasks.Should().HaveCountGreaterOrEqualTo(2);
+        document.Tasks.Should().HaveCountGreaterThanOrEqualTo(2);
         
         var securityEpic = document.Tasks.FirstOrDefault(t => t.Title.Contains("Authentication"));
         securityEpic.Should().NotBeNull();
@@ -141,7 +140,7 @@ public class EndToEndTests
         // Assert
         hierarchy.TotalStoryPoints.Should().BeGreaterThan(50); // Should be 55+ from sample file
         hierarchy.TotalWorkItems.Should().BeGreaterThan(5);
-        hierarchy.Epics.Should().HaveCountGreaterOrEqualTo(2);
+        hierarchy.Epics.Should().HaveCountGreaterThanOrEqualTo(2);
     }
 
     [Fact]
