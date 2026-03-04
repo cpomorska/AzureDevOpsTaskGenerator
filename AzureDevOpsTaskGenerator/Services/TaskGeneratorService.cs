@@ -5,50 +5,49 @@ namespace AzureDevOpsTaskGenerator.Services;
 
 public class TaskGeneratorService : ITaskGenerator
 {
-    public Task<WorkItemHierarchy> BuildHierarchyAsync(TaskDocument document)
+    // #20 – CancellationToken on public methods
+    public Task<WorkItemHierarchy> BuildHierarchyAsync(TaskDocument document,
+        CancellationToken cancellationToken = default)
     {
         var hierarchy = new WorkItemHierarchy();
-        
-        // Extract epics from the document
+
         var epics = document.Tasks.Where(t => t.Type == WorkItemType.Epic).ToList();
         hierarchy.Epics = epics;
 
-        // Build Epic to Features mapping
         foreach (var epic in epics)
         {
             var features = epic.Children.Where(c => c.Type == WorkItemType.Feature).ToList();
             hierarchy.EpicToFeatures[epic.Id] = features;
 
-            // Build Feature to Stories mapping
             foreach (var feature in features)
             {
-                var stories = feature.Children.Where(c => c.Type == WorkItemType.UserStory || c.Type == WorkItemType.Task).ToList();
+                var stories = feature.Children
+                    .Where(c => c.Type is WorkItemType.UserStory or WorkItemType.Task)
+                    .ToList();
                 hierarchy.FeatureToStories[feature.Id] = stories;
             }
         }
 
-        // Calculate totals
-        hierarchy.TotalStoryPoints = CalculateTotalStoryPoints(document.Tasks);
+        // #12 – only sum leaf nodes to avoid double-counting
+        hierarchy.TotalStoryPoints = CalculateLeafStoryPoints(document.Tasks);
         hierarchy.TotalWorkItems = CountAllWorkItems(document.Tasks);
 
         return Task.FromResult(hierarchy);
     }
 
-    public Task<List<DevelopmentTask>> ExtractTasksAsync(TaskDocument document)
+    public Task<List<DevelopmentTask>> ExtractTasksAsync(TaskDocument document,
+        CancellationToken cancellationToken = default)
     {
         var allTasks = new List<DevelopmentTask>();
-        
-        // Flatten the hierarchy to get all tasks
         foreach (var task in document.Tasks)
         {
             allTasks.Add(task);
             AddChildrenRecursively(task, allTasks);
         }
-
         return Task.FromResult(allTasks);
     }
 
-    private void AddChildrenRecursively(DevelopmentTask parent, List<DevelopmentTask> allTasks)
+    private static void AddChildrenRecursively(DevelopmentTask parent, List<DevelopmentTask> allTasks)
     {
         foreach (var child in parent.Children)
         {
@@ -57,28 +56,30 @@ public class TaskGeneratorService : ITaskGenerator
         }
     }
 
-    private int CalculateTotalStoryPoints(List<DevelopmentTask> tasks)
+    // #12 – sum leaf nodes; if a parent's children all have 0 SP, use the parent's own points
+    private static int CalculateLeafStoryPoints(List<DevelopmentTask> tasks)
     {
         int total = 0;
-        
         foreach (var task in tasks)
         {
-            total += task.StoryPoints;
-            total += CalculateTotalStoryPoints(task.Children);
+            if (task.Children.Count == 0)
+            {
+                total += task.StoryPoints;
+            }
+            else
+            {
+                var childTotal = CalculateLeafStoryPoints(task.Children);
+                total += childTotal > 0 ? childTotal : task.StoryPoints;
+            }
         }
-
         return total;
     }
 
-    private int CountAllWorkItems(List<DevelopmentTask> tasks)
+    private static int CountAllWorkItems(List<DevelopmentTask> tasks)
     {
         int count = tasks.Count;
-        
         foreach (var task in tasks)
-        {
             count += CountAllWorkItems(task.Children);
-        }
-
         return count;
     }
 }

@@ -6,6 +6,7 @@ using Microsoft.VisualStudio.Services.WebApi.Patch;
 using Microsoft.VisualStudio.Services.WebApi.Patch.Json;
 using AzureDevOpsTaskGenerator.Interfaces;
 using AzureDevOpsTaskGenerator.Models;
+using WorkItemType = AzureDevOpsTaskGenerator.Models.WorkItemType;
 
 namespace AzureDevOpsTaskGenerator.Services;
 
@@ -15,18 +16,20 @@ public class AzureDevOpsClient : IAzureDevOpsClient
     private WorkItemTrackingHttpClient? _workItemClient;
     private string _organizationUrl = string.Empty;
 
-    public async Task<bool> AuthenticateAsync(string organizationUrl, string personalAccessToken)
+    // #20 – CancellationToken throughout
+    public async Task<bool> AuthenticateAsync(string organizationUrl, string personalAccessToken,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             _organizationUrl = organizationUrl;
             var credentials = new VssBasicCredential(string.Empty, personalAccessToken);
             _connection = new VssConnection(new Uri(organizationUrl), credentials);
-            
+
             await _connection.ConnectAsync();
             _workItemClient = await _connection.GetClientAsync<WorkItemTrackingHttpClient>();
-            
-            return await TestConnectionAsync();
+
+            return await TestConnectionAsync(cancellationToken);
         }
         catch (Exception ex)
         {
@@ -35,16 +38,14 @@ public class AzureDevOpsClient : IAzureDevOpsClient
         }
     }
 
-    public async Task<bool> TestConnectionAsync()
+    public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken = default)
     {
         try
         {
             if (_workItemClient == null) return false;
-            
-            // Try to get work item types to test connection
-            var projects = await _connection!.GetClient<Microsoft.TeamFoundation.Core.WebApi.ProjectHttpClient>()
+            var projects = await _connection!
+                .GetClient<Microsoft.TeamFoundation.Core.WebApi.ProjectHttpClient>()
                 .GetProjects();
-            
             return projects.Any();
         }
         catch
@@ -53,43 +54,59 @@ public class AzureDevOpsClient : IAzureDevOpsClient
         }
     }
 
-    public async Task<int> CreateWorkItemAsync(DevelopmentTask task, string project, int? parentId = null)
+    public async Task<int> CreateWorkItemAsync(DevelopmentTask task, string project,
+        int? parentId = null, CancellationToken cancellationToken = default)
     {
         if (_workItemClient == null)
             throw new InvalidOperationException("Not authenticated. Call AuthenticateAsync first.");
 
+        // #13 – validate title before sending
+        if (string.IsNullOrWhiteSpace(task.Title))
+            throw new ArgumentException($"Work item title must not be empty. Task ID: {task.Id}");
+
         var workItemType = MapToAzureDevOpsWorkItemType(task.Type);
         var patchDocument = new JsonPatchDocument();
 
-        // Required fields
-        patchDocument.Add(new JsonPatchOperation()
+        patchDocument.Add(new JsonPatchOperation
         {
             Operation = Operation.Add,
             Path = "/fields/System.Title",
             Value = task.Title
         });
 
-        patchDocument.Add(new JsonPatchOperation()
+        // #8 – hold reference to description operation for later update
+        var descriptionOp = new JsonPatchOperation
         {
             Operation = Operation.Add,
             Path = "/fields/System.Description",
-            Value = task.Description
-        });
+            Value = BuildDescription(task)
+        };
+        patchDocument.Add(descriptionOp);
 
-        // Priority
-        patchDocument.Add(new JsonPatchOperation()
+        // #6 – Critical → priority 1 + Severity; High → priority 1; others mapped normally
+        patchDocument.Add(new JsonPatchOperation
         {
             Operation = Operation.Add,
             Path = "/fields/Microsoft.VSTS.Common.Priority",
             Value = MapPriority(task.Priority)
         });
 
-        // Story Points (for User Stories and Features)
-        if (task.Type == Models.WorkItemType.UserStory || task.Type == Models.WorkItemType.Feature)
+        if (task.Priority == Priority.Critical)
+        {
+            patchDocument.Add(new JsonPatchOperation
+            {
+                Operation = Operation.Add,
+                Path = "/fields/Microsoft.VSTS.Common.Severity",
+                Value = "1 - Critical"
+            });
+        }
+
+        // #7 – Story Points for Epic, Feature and UserStory
+        if (task.Type is WorkItemType.Epic or WorkItemType.Feature or WorkItemType.UserStory)
         {
             if (task.StoryPoints > 0)
             {
-                patchDocument.Add(new JsonPatchOperation()
+                patchDocument.Add(new JsonPatchOperation
                 {
                     Operation = Operation.Add,
                     Path = "/fields/Microsoft.VSTS.Scheduling.StoryPoints",
@@ -98,10 +115,9 @@ public class AzureDevOpsClient : IAzureDevOpsClient
             }
         }
 
-        // Effort (for Tasks)
-        if (task.Type == Models.WorkItemType.Task && task.StoryPoints > 0)
+        if (task.Type == WorkItemType.Task && task.StoryPoints > 0)
         {
-            patchDocument.Add(new JsonPatchOperation()
+            patchDocument.Add(new JsonPatchOperation
             {
                 Operation = Operation.Add,
                 Path = "/fields/Microsoft.VSTS.Scheduling.OriginalEstimate",
@@ -109,55 +125,54 @@ public class AzureDevOpsClient : IAzureDevOpsClient
             });
         }
 
-        // Business Value
         if (!string.IsNullOrEmpty(task.BusinessValue))
         {
-            var mappedBusinessValue = MapBusinessValue(task.BusinessValue);
-            if (mappedBusinessValue.HasValue)
+            var bv = MapBusinessValue(task.BusinessValue);
+            if (bv.HasValue)
             {
-                patchDocument.Add(new JsonPatchOperation()
+                patchDocument.Add(new JsonPatchOperation
                 {
                     Operation = Operation.Add,
                     Path = "/fields/Microsoft.VSTS.Common.BusinessValue",
-                    Value = mappedBusinessValue.Value
+                    Value = bv.Value
                 });
             }
         }
 
-        // Tags
-        if (task.Tags.Any())
+        // combined tags: explicit tags + theme (#10)
+        var allTags = new List<string>(task.Tags);
+        if (!string.IsNullOrWhiteSpace(task.Theme))
+            allTags.Add(task.Theme);
+
+        if (allTags.Count > 0)
         {
-            patchDocument.Add(new JsonPatchOperation()
+            patchDocument.Add(new JsonPatchOperation
             {
                 Operation = Operation.Add,
                 Path = "/fields/System.Tags",
-                Value = string.Join("; ", task.Tags)
+                Value = string.Join("; ", allTags)
             });
         }
 
-        // Acceptance Criteria (in description for now)
-        if (task.AcceptanceCriteria.Any())
+        // #14 – include parent relation directly in the creation request
+        if (parentId.HasValue)
         {
-            var fullDescription = task.Description;
-            if (!string.IsNullOrEmpty(fullDescription))
-                fullDescription += "<br/><br/>";
-            
-            fullDescription += "<strong>Acceptance Criteria:</strong><br/>";
-            fullDescription += string.Join("<br/>", task.AcceptanceCriteria.Select((ac, i) => $"{i + 1}. {ac}"));
-            
-            patchDocument[1].Value = fullDescription; // Update description
+            patchDocument.Add(new JsonPatchOperation
+            {
+                Operation = Operation.Add,
+                Path = "/relations/-",
+                Value = new
+                {
+                    rel = "System.LinkTypes.Hierarchy-Reverse",
+                    url = $"{_organizationUrl}/_apis/wit/workItems/{parentId.Value}"
+                }
+            });
         }
 
         try
         {
-            var workItem = await _workItemClient.CreateWorkItemAsync(patchDocument, project, workItemType);
-            
-            // Create parent-child relationship if parentId is provided
-            if (parentId.HasValue && workItem.Id.HasValue)
-            {
-                await CreateParentChildRelationship(workItem.Id.Value, parentId.Value);
-            }
-
+            var workItem = await _workItemClient.CreateWorkItemAsync(
+                patchDocument, project, workItemType, cancellationToken: cancellationToken);
             return workItem.Id ?? 0;
         }
         catch (Exception ex)
@@ -167,108 +182,134 @@ public class AzureDevOpsClient : IAzureDevOpsClient
         }
     }
 
-    public async Task<List<int>> CreateWorkItemHierarchyAsync(WorkItemHierarchy hierarchy, string project)
+    public async Task<List<int>> CreateWorkItemHierarchyAsync(WorkItemHierarchy hierarchy, string project,
+        CancellationToken cancellationToken = default)
     {
         if (_workItemClient == null)
             throw new InvalidOperationException("Not authenticated. Call AuthenticateAsync first.");
 
-        var createdWorkItemIds = new List<int>();
+        var createdIds = new List<int>();
 
-        // Create Epics first
         foreach (var epic in hierarchy.Epics)
         {
-            var epicId = await CreateWorkItemAsync(epic, project);
-            createdWorkItemIds.Add(epicId);
-
-            // Create Features under this Epic
-            foreach (var feature in epic.Children.Where(c => c.Type == Models.WorkItemType.Feature))
+            // #15 – per-item error handling
+            int epicId = 0;
+            try
             {
-                var featureId = await CreateWorkItemAsync(feature, project, epicId);
-                createdWorkItemIds.Add(featureId);
+                epicId = await CreateWorkItemAsync(epic, project, null, cancellationToken);
+                createdIds.Add(epicId);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Skipping Epic '{epic.Title}': {ex.Message}");
+                continue;
+            }
 
-                // Create User Stories/Tasks under this Feature
+            foreach (var feature in epic.Children.Where(c => c.Type == WorkItemType.Feature))
+            {
+                int featureId = 0;
+                try
+                {
+                    featureId = await CreateWorkItemAsync(feature, project, epicId, cancellationToken);
+                    createdIds.Add(featureId);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Skipping Feature '{feature.Title}': {ex.Message}");
+                    continue;
+                }
+
                 foreach (var story in feature.Children)
                 {
-                    var storyId = await CreateWorkItemAsync(story, project, featureId);
-                    createdWorkItemIds.Add(storyId);
-
-                    // Create Tasks under User Stories if any
-                    foreach (var task in story.Children.Where(c => c.Type == Models.WorkItemType.Task))
+                    int storyId = 0;
+                    try
                     {
-                        var taskId = await CreateWorkItemAsync(task, project, storyId);
-                        createdWorkItemIds.Add(taskId);
+                        storyId = await CreateWorkItemAsync(story, project, featureId, cancellationToken);
+                        createdIds.Add(storyId);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Skipping Story/Task '{story.Title}': {ex.Message}");
+                        continue;
+                    }
+
+                    foreach (var child in story.Children.Where(c => c.Type == WorkItemType.Task))
+                    {
+                        try
+                        {
+                            var childId = await CreateWorkItemAsync(child, project, storyId, cancellationToken);
+                            createdIds.Add(childId);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Skipping Task '{child.Title}': {ex.Message}");
+                        }
                     }
                 }
             }
 
-            // Create direct children (User Stories/Tasks) under Epic if no Features
-            foreach (var child in epic.Children.Where(c => c.Type != Models.WorkItemType.Feature))
+            foreach (var child in epic.Children.Where(c => c.Type != WorkItemType.Feature))
             {
-                var childId = await CreateWorkItemAsync(child, project, epicId);
-                createdWorkItemIds.Add(childId);
+                try
+                {
+                    var childId = await CreateWorkItemAsync(child, project, epicId, cancellationToken);
+                    createdIds.Add(childId);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Skipping '{child.Title}': {ex.Message}");
+                }
             }
         }
 
-        return createdWorkItemIds;
+        return createdIds;
     }
 
-    private async Task CreateParentChildRelationship(int childId, int parentId)
+    // #8 – description built once, reference kept
+    private static string BuildDescription(DevelopmentTask task)
     {
-        var patchDocument = new JsonPatchDocument();
-        
-        patchDocument.Add(new JsonPatchOperation()
-        {
-            Operation = Operation.Add,
-            Path = "/relations/-",
-            Value = new
-            {
-                rel = "System.LinkTypes.Hierarchy-Reverse",
-                url = $"{_organizationUrl}/_apis/wit/workItems/{parentId}"
-            }
-        });
+        var desc = task.Description ?? "";
 
-        await _workItemClient!.UpdateWorkItemAsync(patchDocument, childId);
+        if (task.AcceptanceCriteria.Count > 0)
+        {
+            if (!string.IsNullOrEmpty(desc)) desc += "<br/><br/>";
+            desc += "<strong>Acceptance Criteria:</strong><br/>";
+            desc += string.Join("<br/>", task.AcceptanceCriteria.Select((ac, i) => $"{i + 1}. {ac}"));
+        }
+
+        return desc;
     }
 
-    private string MapToAzureDevOpsWorkItemType(Models.WorkItemType type)
+    private static string MapToAzureDevOpsWorkItemType(WorkItemType type) => type switch
     {
-        return type switch
+        WorkItemType.Epic => "Epic",
+        WorkItemType.Feature => "Feature",
+        WorkItemType.UserStory => "User Story",
+        WorkItemType.Task => "Task",
+        WorkItemType.Bug => "Bug",
+        _ => "Task"
+    };
+
+    private static int? MapBusinessValue(string value)
+    {
+        if (int.TryParse(value, out int r)) return r;
+        return value.Trim().ToLowerInvariant() switch
         {
-            Models.WorkItemType.Epic => "Epic",
-            Models.WorkItemType.Feature => "Feature",
-            Models.WorkItemType.UserStory => "User Story",
-            Models.WorkItemType.Task => "Task",
-            Models.WorkItemType.Bug => "Bug",
-            _ => "Task"
+            "high" => 100,
+            "medium" => 50,
+            "low" => 10,
+            _ => null
         };
     }
 
-    private int? MapBusinessValue(string value)
+    // #6 – Critical and High both map to ADO priority 1; Severity distinguishes them
+    private static int MapPriority(Priority priority) => priority switch
     {
-        if (int.TryParse(value, out int result))
-            return result;
-        switch (value.Trim().ToLowerInvariant())
-        {
-            case "high": return 100;
-            case "medium": return 50;
-            case "low": return 10;
-            default: return null;
-        }
-    }
-
-    private int MapPriority(Priority priority)
-    {
-        switch (priority)
-        {
-            case Priority.Critical:
-            case Priority.High:
-                return 1;
-            case Priority.Medium:
-                return 2;
-            case Priority.Low:
-                return 3;
-            default:
-                return 2; // Default to Medium if unknown
-        }
-    }
+        Priority.Critical => 1,
+        Priority.High => 1,
+        Priority.Medium => 2,
+        Priority.Low => 3,
+        _ => 2
+    };
 }
+

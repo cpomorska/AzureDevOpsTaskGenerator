@@ -64,7 +64,7 @@ public class TaskGeneratorServiceTests
         hierarchy.EpicToFeatures["epic1"].Should().Contain(feature1);
         hierarchy.EpicToFeatures["epic1"].Should().Contain(feature2);
         
-        hierarchy.TotalStoryPoints.Should().Be(34); // 21 + 8 + 5
+        hierarchy.TotalStoryPoints.Should().Be(13); // leaf nodes: 8 + 5
         hierarchy.TotalWorkItems.Should().Be(3);
     }
 
@@ -124,7 +124,7 @@ public class TaskGeneratorServiceTests
         hierarchy.FeatureToStories["feature1"].Should().Contain(story1);
         hierarchy.FeatureToStories["feature1"].Should().Contain(task1);
         
-        hierarchy.TotalStoryPoints.Should().Be(35); // 20 + 10 + 3 + 2
+        hierarchy.TotalStoryPoints.Should().Be(5); // leaf nodes: story1(3) + task1(2)
         hierarchy.TotalWorkItems.Should().Be(4);
     }
 
@@ -160,7 +160,7 @@ public class TaskGeneratorServiceTests
         hierarchy.Epics.Should().HaveCount(2);
         hierarchy.Epics.Should().Contain(epic1);
         hierarchy.Epics.Should().Contain(epic2);
-        hierarchy.TotalStoryPoints.Should().Be(34);
+        hierarchy.TotalStoryPoints.Should().Be(34); // both epics are leaves
         hierarchy.TotalWorkItems.Should().Be(2);
     }
 
@@ -296,7 +296,7 @@ public class TaskGeneratorServiceTests
         var hierarchy = await _service.BuildHierarchyAsync(document);
 
         // Assert
-        hierarchy.TotalStoryPoints.Should().Be(18); // 0 + 8 + 5 + 3 + 2
+        hierarchy.TotalStoryPoints.Should().Be(5); // leaf nodes: story1(3) + story2(2)
         hierarchy.TotalWorkItems.Should().Be(5); // epic + 2 features + 2 stories
     }
 }
