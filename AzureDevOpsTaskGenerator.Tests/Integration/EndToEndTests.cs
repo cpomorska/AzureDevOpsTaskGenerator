@@ -1,7 +1,6 @@
 using FluentAssertions;
 using Xunit;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using AzureDevOpsTaskGenerator.Interfaces;
 using AzureDevOpsTaskGenerator.Parsers;

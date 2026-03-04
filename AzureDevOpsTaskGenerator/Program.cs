@@ -12,6 +12,7 @@ class Program
 {
     static async Task<int> Main(string[] args)
     {
+        // Build DI host
         var host = CreateHostBuilder(args).Build();
 
         if (!TryParseArguments(args, out var file, out var organization, out var project, out var token, out var dryRun))
