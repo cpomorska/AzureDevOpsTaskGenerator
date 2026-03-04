@@ -2,7 +2,15 @@
 
 A C# tool to parse markdown task documents and automatically create hierarchical work items (Epics, Features, User Stories, Tasks) in Azure DevOps.
 
-## Azure DevOps Task Generator
+## Updated: Azure DevOps Task Generator
+- Refactored with Claude Sonnet 4.6.
+- Now uses .NET Core 10 
+- Effort to refactor and test the tool: 1 hour
+- Complete KI generated coding
+- Used GitHub Copilot with VS 2026 Insiders
+- Models used: Claude Sonnet 4.6, Codex-5.1 mini
+
+## Initial: Azure DevOps Task Generator
 - Created as a personal project to automate the creation of work items in Azure DevOps.
 - Usecase: Import the documents created with Kiro 
 - Kiro and Windsurf used to create project and tests
@@ -12,7 +20,7 @@ A C# tool to parse markdown task documents and automatically create hierarchical
 - Models used: Kiro -> Claude Sonnet 4.0, Windsurf SWE-1
 
 ## Prerequisites
-- .NET 9.0 or later
+- .NET 10.0 or later
 - Azure DevOps organization and project
 - Azure DevOps Personal Access Token (PAT) with work item read/write permissions
 
