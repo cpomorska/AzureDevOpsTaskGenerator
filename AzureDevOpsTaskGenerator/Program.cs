@@ -1,5 +1,3 @@
-using System.CommandLine;
-using System.IO;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -17,58 +15,13 @@ class Program
         // Build DI host
         var host = CreateHostBuilder(args).Build();
 
-        // Simple manual argument parsing to avoid depending on System.CommandLine version differences.
-        string? filePath = GetOptionValue(args, "--file");
-        string? organization = GetOptionValue(args, "--organization");
-        string? project = GetOptionValue(args, "--project");
-        string? token = GetOptionValue(args, "--token");
-        string? dryRunRaw = GetOptionValue(args, "--dry-run");
-        var dryRun = false;
-
-        if (!string.IsNullOrEmpty(dryRunRaw) && bool.TryParse(dryRunRaw, out var parsedDry))
+        if (!TryParseArguments(args, out var file, out var organization, out var project, out var token, out var dryRun))
         {
-            dryRun = parsedDry;
-        }
-
-    static string? GetOptionValue(string[] args, string optionName)
-    {
-        if (args == null || args.Length == 0)
-            return null;
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            var a = args[i];
-
-            if (string.Equals(a, optionName, StringComparison.OrdinalIgnoreCase))
-            {
-                if (i + 1 < args.Length)
-                    return args[i + 1].Trim('"');
-                return null;
-            }
-
-            // support --option=value
-            if (a.StartsWith(optionName + "=", StringComparison.OrdinalIgnoreCase))
-            {
-                return a.Substring(optionName.Length + 1).Trim('"');
-            }
-        }
-
-        return null;
-    }
-
-        // Validate required args
-        var logger = host.Services.GetRequiredService<ILogger<Program>>();
-
-        if (string.IsNullOrEmpty(filePath) || string.IsNullOrEmpty(organization) || string.IsNullOrEmpty(project) || string.IsNullOrEmpty(token))
-        {
-            logger.LogError("Missing required arguments. Usage: --file <path> --organization <orgUrl> --project <project> --token <pat> [--dry-run true|false]");
+            PrintUsage();
             return 1;
         }
 
-        var fileInfo = new FileInfo(filePath!);
-
-        await ProcessTaskFile(host.Services, fileInfo, organization!, project!, token!, dryRun);
-
+        await ProcessTaskFile(host.Services, file, organization, project, token, dryRun);
         return 0;
     }
 
@@ -82,13 +35,23 @@ class Program
                 services.AddScoped<IAzureDevOpsClient, AzureDevOpsClient>();
             });
 
-    static async Task ProcessTaskFile(IServiceProvider services, FileInfo file, string organization, 
+    static async Task ProcessTaskFile(IServiceProvider services, FileInfo file, string organization,
         string project, string token, bool dryRun)
     {
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        var ct = cts.Token;
+
         var logger = services.GetRequiredService<ILogger<Program>>();
         var parser = services.GetRequiredService<ITextFileParser>();
         var taskGenerator = services.GetRequiredService<ITaskGenerator>();
         var azureDevOpsClient = services.GetRequiredService<IAzureDevOpsClient>();
+
+        if (!file.Exists)
+        {
+            logger.LogError("Task file not found: {File}", file.FullName);
+            return;
+        }
 
         try
         {
@@ -98,20 +61,17 @@ class Program
             logger.LogInformation($"Project: {project}");
             logger.LogInformation($"Dry Run: {dryRun}");
 
-            // Parse the task file
             logger.LogInformation("Parsing task file...");
-            var document = await parser.ParseAsync(file.FullName);
+            var document = await parser.ParseAsync(file.FullName, ct);
             logger.LogInformation($"Parsed document: {document.Title}");
             logger.LogInformation($"Found {document.Tasks.Count} top-level tasks");
 
-            // Build hierarchy
             logger.LogInformation("Building work item hierarchy...");
-            var hierarchy = await taskGenerator.BuildHierarchyAsync(document);
+            var hierarchy = await taskGenerator.BuildHierarchyAsync(document, ct);
             logger.LogInformation($"Total work items: {hierarchy.TotalWorkItems}");
             logger.LogInformation($"Total story points: {hierarchy.TotalStoryPoints}");
             logger.LogInformation($"Epics: {hierarchy.Epics.Count}");
 
-            // Display hierarchy
             DisplayHierarchy(hierarchy, logger);
 
             if (dryRun)
@@ -120,10 +80,9 @@ class Program
                 return;
             }
 
-            // Authenticate with Azure DevOps
             logger.LogInformation("Authenticating with Azure DevOps...");
-            var authenticated = await azureDevOpsClient.AuthenticateAsync(organization, token);
-            
+            var authenticated = await azureDevOpsClient.AuthenticateAsync(organization, token, ct);
+
             if (!authenticated)
             {
                 logger.LogError("Failed to authenticate with Azure DevOps. Please check your credentials.");
@@ -132,13 +91,15 @@ class Program
 
             logger.LogInformation("Authentication successful!");
 
-            // Create work items
             logger.LogInformation("Creating work items in Azure DevOps...");
-            var createdIds = await azureDevOpsClient.CreateWorkItemHierarchyAsync(hierarchy, project);
-            
+            var createdIds = await azureDevOpsClient.CreateWorkItemHierarchyAsync(hierarchy, project, ct);
+
             logger.LogInformation($"Successfully created {createdIds.Count} work items!");
             logger.LogInformation($"Work item IDs: {string.Join(", ", createdIds)}");
-
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogWarning("Operation was cancelled by the user.");
         }
         catch (Exception ex)
         {
@@ -174,5 +135,86 @@ class Program
         }
 
         logger.LogInformation("=== END HIERARCHY ===\n");
+    }
+
+    static bool TryParseArguments(string[] args, out FileInfo file, out string organization, out string project, out string token, out bool dryRun)
+    {
+        file = null!;
+        organization = string.Empty;
+        project = string.Empty;
+        token = string.Empty;
+        dryRun = false;
+
+        if (args == null || args.Length == 0)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            var argument = args[i];
+
+            if (string.Equals(argument, "--dry-run", StringComparison.OrdinalIgnoreCase))
+            {
+                dryRun = true;
+                continue;
+            }
+
+            if (string.Equals(argument, "--help", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(argument, "-h", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!argument.StartsWith("--", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (i == args.Length - 1)
+            {
+                return false;
+            }
+
+            var value = args[++i];
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            switch (argument.ToLowerInvariant())
+            {
+                case "--file":
+                    file = new FileInfo(value);
+                    break;
+                case "--organization":
+                    organization = value;
+                    break;
+                case "--project":
+                    project = value;
+                    break;
+                case "--token":
+                    token = value;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        return file != null &&
+               !string.IsNullOrWhiteSpace(organization) &&
+               !string.IsNullOrWhiteSpace(project) &&
+               !string.IsNullOrWhiteSpace(token);
+    }
+
+    static void PrintUsage()
+    {
+        Console.WriteLine("Usage: AzureDevOpsTaskGenerator --file <path> --organization <url> --project <name> --token <pat> [--dry-run]");
+        Console.WriteLine("Options:");
+        Console.WriteLine("  --file <path>         (required) Path to the Markdown task file to process.");
+        Console.WriteLine("  --organization <url>  (required) Azure DevOps organization URL (e.g. https://dev.azure.com/yourorg).");
+        Console.WriteLine("  --project <name>      (required) Target Azure DevOps project name.");
+        Console.WriteLine("  --token <pat>         (required) Personal Access Token with work item permissions.");
+        Console.WriteLine("  --dry-run             (optional) Parse and log work items without creating them in Azure DevOps.");
     }
 }
